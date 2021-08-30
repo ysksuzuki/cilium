@@ -261,6 +261,10 @@ struct egress_policy {
 	__be32 gateway_ips[EGRESS_MAX_GATEWAY_NODES];
 };
 
+struct egress_ct {
+	__be32 gateway_ip;
+};
+
 struct edt_id {
 	__u64		id;
 };
