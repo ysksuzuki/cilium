@@ -11,6 +11,7 @@
 
 #include <linux/ip.h>
 
+#include "encap.h"
 #include "maps.h"
 
 /* EGRESS_STATIC_PREFIX represents the size in bits of the static prefix part of
@@ -83,6 +84,35 @@ __be32 pick_egress_gateway(const struct egress_policy *policy)
 	index %= EGRESS_MAX_GATEWAY_NODES;
 
 	return policy->gateway_ips[index];
+}
+
+__section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_EGRESS_GATEWAY_REDIRECT)
+int egress_gateway_redirect(struct __ctx_buff *ctx)
+{
+	struct endpoint_key key = {};
+	int ret;
+
+	__u32 dst_id = ctx_load_meta(ctx, CB_DST_ENDPOINT_ID);
+	__u8 encrypt_key = ctx_load_meta(ctx, CB_ENCRYPT_KEY);
+	__u8 reason = ctx_load_meta(ctx, CB_REASON);
+	__u32 monitor = ctx_load_meta(ctx, CB_MONITOR);
+	__be32 gateway_ip = ctx_load_meta(ctx, CB_GATEWAY_IP);
+
+	/* Encap and redirect the packet to egress gateway node through a tunnel.
+	 * Even if the tunnel endpoint is on the same host, follow the same data
+	 * path to be consistent. In future, it can be optimized by directly
+	 * direct to external interface.
+	 */
+	ret = encap_and_redirect_lxc(ctx, gateway_ip, encrypt_key, &key,
+				     SECLABEL, monitor);
+	if (ret == IPSEC_ENDPOINT) {
+		send_trace_notify(ctx, TRACE_TO_STACK, SECLABEL, dst_id, 0, 0,
+				  reason, monitor);
+		cilium_dbg_capture(ctx, DBG_CAPTURE_DELIVERY, 0);
+		return CTX_ACT_OK;
+	}
+
+	return ret;
 }
 
 #endif /* ENABLE_EGRESS_GATEWAY */

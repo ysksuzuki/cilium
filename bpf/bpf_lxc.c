@@ -800,8 +800,6 @@ ct_recreate4:
 
 #ifdef ENABLE_EGRESS_GATEWAY
 	{
-		struct endpoint_key key = {};
-
 		struct ipv4_ct_tuple ct_key = {};
 		struct egress_ct *egress_ct;
 
@@ -842,17 +840,14 @@ ct_recreate4:
 		update_egress_ct_entry(&ct_key, gateway_ip);
 
 do_egress_gateway_redirect:
-		/* Encap and redirect the packet to egress gateway node through a tunnel.
-		 * Even if the tunnel endpoint is on the same host, follow the same data
-		 * path to be consistent. In future, it can be optimized by directly
-		 * direct to external interface.
-		 */
-		ret = encap_and_redirect_lxc(ctx, gateway_ip, encrypt_key, &key,
-					     SECLABEL, monitor);
-		if (ret == IPSEC_ENDPOINT)
-			goto encrypt_to_stack;
-		else
-			return ret;
+		ctx_store_meta(ctx, CB_DST_ENDPOINT_ID, *dst_id);
+		ctx_store_meta(ctx, CB_ENCRYPT_KEY, encrypt_key);
+		ctx_store_meta(ctx, CB_REASON, reason);
+		ctx_store_meta(ctx, CB_MONITOR, monitor);
+		ctx_store_meta(ctx, CB_GATEWAY_IP, gateway_ip);
+
+		ep_tail_call(ctx, CILIUM_CALL_EGRESS_GATEWAY_REDIRECT);
+		return DROP_MISSED_TAIL_CALL;
 	}
 skip_egress_gateway:
 #endif /* ENABLE_EGRESS_GATEWAY */
