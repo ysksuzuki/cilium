@@ -114,8 +114,9 @@ func (svc *svcInfo) requireNodeLocalBackends(frontend lb.L3n4AddrID) (bool, bool
 func (svc *svcInfo) useMaglev() bool {
 	return option.Config.NodePortAlg == option.NodePortAlgMaglev &&
 		((svc.svcType == lb.SVCTypeNodePort && !isWildcardAddr(svc.frontend)) ||
-			svc.svcType == lb.SVCTypeExternalIPs ||
-			svc.svcType == lb.SVCTypeLoadBalancer)
+			svc.svcType == lb.SVCTypeExternalIPs  ||
+			svc.svcType == lb.SVCTypeLoadBalancer ||
+			svc.svcType == lb.SVCTypeClusterIP)
 }
 
 // Service is a service handler. Its main responsibility is to reflect
