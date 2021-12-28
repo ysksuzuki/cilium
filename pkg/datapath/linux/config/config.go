@@ -56,6 +56,11 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+const (
+	selectionRandom = iota + 1
+	selectionMaglev
+)
+
 var log = logging.DefaultLogger.WithField(logfields.LogSubsys, "datapath-linux-config")
 
 // HeaderfileWriter is a wrapper type which implements datapath.ConfigWriter.
@@ -397,10 +402,7 @@ func (h *HeaderfileWriter) WriteNodeConfig(w io.Writer, cfg *datapath.LocalNodeC
 		cDefinesMap["NATIVE_DEV_MAC_BY_IFINDEX(IFINDEX)"] = macByIfIndexMacro
 		cDefinesMap["IS_L3_DEV(ifindex)"] = isL3DevMacro
 	}
-	const (
-		selectionRandom = iota + 1
-		selectionMaglev
-	)
+
 	cDefinesMap["LB_SELECTION_RANDOM"] = fmt.Sprintf("%d", selectionRandom)
 	cDefinesMap["LB_SELECTION_MAGLEV"] = fmt.Sprintf("%d", selectionMaglev)
 	if option.Config.NodePortAlg == option.NodePortAlgRandom {
@@ -867,6 +869,9 @@ func (h *HeaderfileWriter) writeTemplateConfig(fw *bufio.Writer, e datapath.Endp
 
 	// Local delivery metrics should always be set for endpoint programs.
 	fmt.Fprint(fw, "#define LOCAL_DELIVERY_METRICS 1\n")
+
+	fmt.Fprint(fw, "#undef LB_SELECTION\n")
+	fmt.Fprint(fw, fmt.Sprintf("#define LB_SELECTION %d\n", selectionRandom))
 
 	h.writeNetdevConfig(fw, e)
 

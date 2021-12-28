@@ -4,8 +4,8 @@
 #include <bpf/ctx/skb.h>
 #include <bpf/api.h>
 
-#include <ep_config.h>
 #include <node_config.h>
+#include <ep_config.h>
 
 #include <bpf/verifier.h>
 
