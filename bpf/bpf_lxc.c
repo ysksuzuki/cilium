@@ -29,6 +29,10 @@
 #include "lib/nat46.h"
 #include "lib/identity.h"
 #include "lib/policy.h"
+
+#undef LB_SELECTION
+#define LB_SELECTION LB_SELECTION_RANDOM
+
 #include "lib/lb.h"
 #include "lib/drop.h"
 #include "lib/dbg.h"

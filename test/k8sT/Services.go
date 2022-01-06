@@ -566,6 +566,41 @@ var _ = SkipDescribeIf(helpers.RunsOn54Kernel, "K8sServicesTest", func() {
 
 			monitorRes.ExpectContains(clusterIP, "Service VIP not seen in monitor trace, indicating socket lb still in effect")
 		})
+
+		Context("hostServices.hostNamespaceOnly and Maglev enabled", func() {
+			BeforeAll(func() {
+				DeployCiliumOptionsAndDNS(kubectl, ciliumFilename, map[string]string{
+					"hostServices.hostNamespaceOnly": "true",
+					"loadBalancer.algorithm":         "maglev",
+				})
+				demoYAML = helpers.ManifestGet(kubectl.BasePath(), "demo.yaml")
+				res := kubectl.ApplyDefault(demoYAML)
+				res.ExpectSuccess("unable to apply %s", demoYAML)
+				err := kubectl.WaitforPods(helpers.DefaultNamespace, "-l zgroup=testapp", helpers.HelperTimeout)
+				Expect(err).Should(BeNil())
+			})
+
+			AfterAll(func() {
+				_ = kubectl.Delete(demoYAML)
+				ExpectAllPodsTerminated(kubectl)
+			})
+
+			It("Checks ClusterIP connectivity", func() {
+				clusterIP, _, err := kubectl.GetServiceHostPort(helpers.DefaultNamespace, appServiceName)
+				Expect(err).Should(BeNil(), "Cannot get service %s", serviceName)
+				Expect(govalidator.IsIP(clusterIP)).Should(BeTrue(), "ClusterIP is not an IP")
+
+				httpSVCURL := fmt.Sprintf("http://%s/", clusterIP)
+
+				// Test connectivbity from root ns
+				status := kubectl.ExecInHostNetNS(context.TODO(), ni.k8s1NodeName,
+					helpers.CurlFail(httpSVCURL))
+				status.ExpectSuccess("cannot curl to service IP from host")
+
+				// Test connectivity from pod ns
+				testCurlFromPods(kubectl, "id=app2", httpSVCURL, 10, 0)
+			})
+		})
 	})
 
 	SkipContextIf(func() bool {
