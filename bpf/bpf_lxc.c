@@ -1456,16 +1456,17 @@ ipv6_policy(struct __ctx_buff *ctx, int ifindex, __u32 src_label,
 	}
 
 #ifdef ENABLE_NODEPORT
+# ifdef ENABLE_DSR
 	if (tuple->nexthdr == IPPROTO_TCP) {
 		if (ctx_load_bytes(ctx, l4_off + 12, &tcp_flags, 2) < 0)
 			return DROP_CT_INVALID_HDR;
 	}
+
 	if (ret == CT_NEW || ret == CT_REOPENED ||
 	    /* See comment in ipv4_policy() */
 	    (ret == CT_ESTABLISHED && (tuple->nexthdr != IPPROTO_TCP ||
 	    ((tcp_flags.value & TCP_FLAG_SYN) && !(tcp_flags.value & TCP_FLAG_ACK))))) {
 		bool dsr = false;
-# ifdef ENABLE_DSR
 		int ret2;
 
 		ret2 = handle_dsr_v6(ctx, &dsr);
@@ -1473,10 +1474,11 @@ ipv6_policy(struct __ctx_buff *ctx, int ifindex, __u32 src_label,
 			return ret2;
 
 		ct_state_new.dsr = dsr;
-		if ((ret == CT_REOPENED || ret == CT_ESTABLISHED) && ct_state->dsr != dsr) {
+		if ((ret == CT_REOPENED || ret == CT_ESTABLISHED) && ct_state->dsr != dsr)
 			ct_update6_dsr(get_ct_map6(tuple), tuple, dsr);
-			ct_update_nodeport(get_ct_map6(tuple), tuple, !dsr);
-		}
+# else
+	if (ret == CT_NEW || ret == CT_REOPENED) {
+		bool dsr = false;
 # endif /* ENABLE_DSR */
 		if (!dsr) {
 			bool node_port =
@@ -1799,10 +1801,12 @@ skip_policy_enforcement:
 #endif /* ENABLE_PER_PACKET_LB && !DISABLE_LOOPBACK_LB */
 
 #ifdef ENABLE_NODEPORT
+# ifdef ENABLE_DSR
 	if (tuple->nexthdr == IPPROTO_TCP && has_l4_header) {
 		if (ctx_load_bytes(ctx, l4_off + 12, &tcp_flags, 2) < 0)
 			return DROP_CT_INVALID_HDR;
 	}
+
 	if (ret == CT_NEW || ret == CT_REOPENED ||
 	    /* In case a DSR flow hits a stale nodeport ct entry, override it
 	     * so that a reply packet will be SNATed properly
@@ -1810,7 +1814,6 @@ skip_policy_enforcement:
 	    (ret == CT_ESTABLISHED && ((tuple->nexthdr != IPPROTO_TCP || !has_l4_header) ||
 	    ((tcp_flags.value & TCP_FLAG_SYN) && !(tcp_flags.value & TCP_FLAG_ACK))))) {
 		bool dsr = false;
-# ifdef ENABLE_DSR
 		int ret2;
 
 		ret2 = handle_dsr_v4(ctx, &dsr);
@@ -1818,10 +1821,11 @@ skip_policy_enforcement:
 			return ret2;
 
 		ct_state_new.dsr = dsr;
-		if ((ret == CT_REOPENED || ret == CT_ESTABLISHED) && ct_state->dsr != dsr) {
+		if ((ret == CT_REOPENED || ret == CT_ESTABLISHED) && ct_state->dsr != dsr)
 			ct_update4_dsr(get_ct_map4(tuple), tuple, dsr);
-			ct_update_nodeport(get_ct_map4(tuple), tuple, !dsr);
-		}
+# else
+	if (ret == CT_NEW || ret == CT_REOPENED) {
+		bool dsr = false;
 # endif /* ENABLE_DSR */
 		if (!dsr) {
 			bool node_port =
