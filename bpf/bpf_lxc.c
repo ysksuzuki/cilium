@@ -1108,13 +1108,17 @@ skip_vtep:
 #endif /* TUNNEL_MODE */
 	if (is_defined(ENABLE_HOST_ROUTING)) {
 		int oif;
+		struct endpoint_info *ep;
 
-		ret = redirect_direct_v4(ctx, ETH_HLEN, ip4, &oif);
-		if (likely(ret == CTX_ACT_REDIRECT))
-			send_trace_notify(ctx, TRACE_TO_NETWORK, SECLABEL,
-					  *dst_id, 0, oif,
-					  trace.reason, trace.monitor);
-		return ret;
+		ep = lookup_ip4_endpoint(ip4);
+		if (!ep) {
+			ret = redirect_direct_v4(ctx, ETH_HLEN, ip4, &oif);
+			if (likely(ret == CTX_ACT_REDIRECT))
+				send_trace_notify(ctx, TRACE_TO_NETWORK, SECLABEL,
+						  *dst_id, 0, oif,
+						  trace.reason, trace.monitor);
+			return ret;
+	    }
 	}
 
 	goto pass_to_stack;
