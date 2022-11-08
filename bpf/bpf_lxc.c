@@ -1694,7 +1694,7 @@ ipv4_policy(struct __ctx_buff *ctx, int ifindex, __u32 src_label, enum ct_status
 	struct ct_buffer4 *ct_buffer;
 	__u32 monitor = 0, zero = 0;
 	enum trace_reason reason;
-	int ret, verdict = 0;
+	int ret, verdict = 0, l4_off;
 	__be32 orig_sip;
 	__u8 policy_match_type = POLICY_MATCH_NONE;
 	__u8 audited = 0;
@@ -1712,6 +1712,7 @@ ipv4_policy(struct __ctx_buff *ctx, int ifindex, __u32 src_label, enum ct_status
 
 	orig_sip = ip4->saddr;
 
+	l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
 #ifndef ENABLE_IPV4_FRAGMENTS
 	/* Indicate that this is a datagram fragment for which we cannot
 	 * retrieve L4 ports. Do not set flag if we support fragmentation.
@@ -1761,9 +1762,7 @@ ipv4_policy(struct __ctx_buff *ctx, int ifindex, __u32 src_label, enum ct_status
 		     !ct_state->loopback)) {
 		struct csum_offset csum_off = {};
 		bool has_l4_header = false;
-		int ret2, l4_off;
-
-		l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+		int ret2;
 
 		has_l4_header = ipv4_has_l4_header(ip4);
 		if (has_l4_header)
@@ -1818,18 +1817,32 @@ skip_policy_enforcement:
 #endif /* ENABLE_PER_PACKET_LB && !DISABLE_LOOPBACK_LB */
 
 #ifdef ENABLE_NODEPORT
-	if (ret == CT_NEW || ret == CT_REOPENED) {
+	{
 		bool dsr = false;
 # ifdef ENABLE_DSR
 		int ret2;
 
-		ret2 = handle_dsr_v4(ctx, &dsr);
+		ret2 = handle_dsr_v4(ctx, &dsr, *ct_status);
 		if (ret2 != 0)
 			return ret2;
 
 		ct_state_new.dsr = dsr;
+
 		if (ret == CT_REOPENED && ct_state->dsr != dsr)
 			ct_update4_dsr(get_ct_map4(tuple), tuple, dsr);
+
+#if DSR_ENCAP_MODE == DSR_ENCAP_IPIP_CNI
+		if (!revalidate_data(ctx, &data, &data_end, &ip4))
+			return DROP_INVALID;
+		tuple->nexthdr = ip4->protocol;
+		tuple->daddr = ip4->daddr;
+		tuple->saddr = ip4->saddr;
+
+		ret = ct_lookup4(get_ct_map4(tuple), tuple, ctx, l4_off, CT_INGRESS, ct_state,
+						 &monitor);
+		if (ret < 0)
+			return ret;
+#endif /* DSR_ENCAP_MODE */
 # endif /* ENABLE_DSR */
 		if (!dsr) {
 			bool node_port =
