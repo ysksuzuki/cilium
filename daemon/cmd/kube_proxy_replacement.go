@@ -117,7 +117,8 @@ func initKubeProxyReplacementOptions() (bool, error) {
 
 		if option.Config.NodePortMode == option.NodePortModeDSR &&
 			option.Config.LoadBalancerDSRDispatch != option.DSRDispatchOption &&
-			option.Config.LoadBalancerDSRDispatch != option.DSRDispatchIPIP ||
+			option.Config.LoadBalancerDSRDispatch != option.DSRDispatchIPIP &&
+			option.Config.LoadBalancerDSRDispatch != option.DSRDispatchIPIPCNI ||
 			option.Config.NodePortMode == option.NodePortModeHybrid &&
 				option.Config.LoadBalancerDSRDispatch != option.DSRDispatchOption {
 			return false, fmt.Errorf("Invalid value for --%s: %s", option.LoadBalancerDSRDispatch, option.Config.LoadBalancerDSRDispatch)
