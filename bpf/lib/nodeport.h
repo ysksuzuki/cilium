@@ -1561,101 +1561,10 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 }
 #endif /* DSR_ENCAP_MODE */
 
-static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr,
-										 enum ct_status ct __maybe_unused)
+static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 {
 	void *data, *data_end;
 	struct iphdr *ip4;
-
-#if DSR_ENCAP_MODE == DSR_ENCAP_IPIP_CNI
-	{
-		struct iphdr iph_inner;
-		const int l3_off = ETH_HLEN;
-		__be32 vip;
-		__be32 podip;
-		__be32 sip;
-		__be32 sum = 0;
-		__be16 dport = 0;
-		struct iphdr iph_old;
-		__be32 address = 0;
-
-		if (!revalidate_data(ctx, &data, &data_end, &ip4))
-			return DROP_INVALID;
-		podip = ip4->daddr;
-
-		if (ip4->protocol == IPPROTO_IPIP) {
-			if (ip4->ihl != 0x5)
-				return DROP_INVALID;
-
-			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
-							   &iph_inner, sizeof(iph_inner)) < 0)
-				return DROP_INVALID;
-			iph_old = iph_inner;
-
-			/* Check whether IPv4 header contains a 64-bit option (IPv4 header
-			 * w/o option (5 x 32-bit words) + the DSR option (2 x 32-bit words)).
-			 */
-			if (iph_inner.ihl == 0x7) {
-				__u32 opt1 = 0, opt2 = 0;
-				__u32 noneopt = 0, noneopt2 = 0;
-				__u16 tot_len = bpf_ntohs(iph_inner.tot_len) - sizeof(opt1) * 2;
-
-				if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr) * 2,
-								   &opt1, sizeof(opt1)) < 0)
-					return DROP_INVALID;
-
-				sum = csum_diff(&opt1, 4, &noneopt, 4, 0);
-
-				opt1 = bpf_ntohl(opt1);
-				if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_32) {
-					if (ctx_load_bytes(ctx, ETH_HLEN +
-							sizeof(struct iphdr) * 2 +
-							sizeof(opt1),
-							&opt2, sizeof(opt2)) < 0)
-						return DROP_INVALID;
-					sum = csum_diff(&opt2, 4, &noneopt2, 4, sum);
-
-					opt2 = bpf_ntohl(opt2);
-					dport = opt1 & DSR_IPV4_DPORT_MASK;
-					address = opt2;
-				}
-
-				iph_inner.ihl = 0x5;
-				iph_inner.tot_len = bpf_htons(tot_len);
-				sum = csum_diff(&iph_old, 4, &iph_inner, 4, sum);
-			}
-
-			/* this will remove inner iph */
-			if (ctx_adjust_hroom(ctx, -(iph_old.ihl * 4),
-							     BPF_ADJ_ROOM_NET,
-							     ctx_adjust_hroom_dsr_flags()) < 0) {
-				return DROP_INVALID;
-			}
-
-			vip = iph_inner.daddr;
-			sip = iph_inner.saddr;
-
-			/* replace outer iph with inner iph */
-			if (ctx_store_bytes(ctx, l3_off,
-					    &iph_inner, sizeof(iph_inner), 0) < 0)
-				return DROP_WRITE_ERROR;
-
-			if (l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
-					    0, sum, 0) < 0)
-				return DROP_CSUM_L3;
-
-			if (iph_old.ihl == 0x7 && (ct == CT_NEW ||
-									   ct == CT_REOPENED)) {
-				*dsr = true;
-				if (snat_v4_create_dsr(ctx, address, dport) < 0)
-					return DROP_INVALID;
-			}
-		}
-	}
-
-#else
-	if (ct != CT_NEW && ct != CT_REOPENED)
-		return 0;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
@@ -1689,10 +1598,33 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr,
 				return DROP_INVALID;
 		}
 	}
-#endif /* DSR_ENCAP_MODE */
 
 	return 0;
 }
+
+#if DSR_ENCAP_MODE == DSR_ENCAP_IPIP_CNI
+static __always_inline int decap_ipip_v4(struct __ctx_buff *ctx)
+{
+	void *data, *data_end;
+	struct iphdr *ip4;
+
+	if (!revalidate_data(ctx, &data, &data_end, &ip4))
+		return DROP_INVALID;
+
+	if (ip4->protocol == IPPROTO_IPIP) {
+		if (ip4->ihl != 0x5)
+			return DROP_INVALID;
+
+		/* This will remove outer iph. Fix me: Not working with XDP */
+		if (ctx_adjust_hroom(ctx, -(ip4->ihl * 4),
+						     BPF_ADJ_ROOM_MAC,
+						     ctx_adjust_hroom_dsr_flags()) < 0) {
+			return DROP_INVALID;
+		}
+	}
+	return 0;
+}
+#endif /* DSR_ENCAP_MODE */
 
 static __always_inline int xlate_dsr_v4(struct __ctx_buff *ctx,
 					const struct ipv4_ct_tuple *tuple,
@@ -2056,6 +1988,12 @@ static __always_inline int nodeport_lb4(struct __ctx_buff *ctx,
 	__u32 monitor = 0;
 
 	cilium_capture_in(ctx);
+
+#if DSR_ENCAP_MODE == DSR_ENCAP_IPIP_CNI
+	ret = decap_ipip_v4(ctx);
+	if (ret != 0)
+		return ret;
+#endif /* DSR_ENCAP_MODE */
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
