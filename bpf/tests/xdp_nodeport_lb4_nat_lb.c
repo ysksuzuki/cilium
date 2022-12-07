@@ -103,7 +103,7 @@ int nodeport_local_backend_pktgen(struct __ctx_buff *ctx)
 	ethhdr__set_macs(l2, client_mac, lb_mac);
 
 	/* Push IPv4 header */
-	l3 = pktgen__push_default_iphdr(&builder);
+	l3 = pktgen__push_default_iphdr(&builder, 0);
 	if (!l3)
 		return TEST_ERROR;
 
@@ -289,7 +289,7 @@ int nodeport_nat_fwd_pktgen(struct __ctx_buff *ctx)
 	ethhdr__set_macs(l2, client_mac, lb_mac);
 
 	/* Push IPv4 header */
-	l3 = pktgen__push_default_iphdr(&builder);
+	l3 = pktgen__push_default_iphdr(&builder, 0);
 	if (!l3)
 		return TEST_ERROR;
 
@@ -454,7 +454,7 @@ int build_reply(struct __ctx_buff *ctx)
 	ethhdr__set_macs(l2, remote_backend_mac, lb_mac);
 
 	/* Push IPv4 header */
-	l3 = pktgen__push_default_iphdr(&builder);
+	l3 = pktgen__push_default_iphdr(&builder, 0);
 	if (!l3)
 		return TEST_ERROR;
 
