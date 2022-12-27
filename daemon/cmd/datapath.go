@@ -328,7 +328,7 @@ func (d *Daemon) initMaps() error {
 		return err
 	}
 
-	if option.Config.TunnelingEnabled() || option.Config.EnableIPv4EgressGateway {
+	if option.Config.TunnelingEnabled() || option.Config.EnableIPv4EgressGateway || option.Config.LoadBalancerDSRDispatch == option.DSRDispatchGeneve {
 		// The IPv4 egress gateway feature also uses tunnel map
 		if _, err := tunnel.TunnelMap.OpenOrCreate(); err != nil {
 			return err

@@ -1701,10 +1701,13 @@ ipv4_policy(struct __ctx_buff *ctx, int ifindex, __u32 src_label, enum ct_status
 	__u8 policy_match_type = POLICY_MATCH_NONE;
 	__u8 audited = 0;
 	bool emit_policy_verdict = true;
+	__be16 dport = 0;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 
+	/* Save the dport before being cleared as CB_PORT_2 aliases CB_POLICY. */
+	dport = (__be16)ctx_load_meta(ctx, CB_PORT_2);
 	policy_clear_mark(ctx);
 
 	/* If packet is coming from the ingress proxy we have to skip
@@ -1824,8 +1827,11 @@ skip_policy_enforcement:
 		bool dsr = false;
 # ifdef ENABLE_DSR
 		int ret2;
-
+#if DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+		ret2 = handle_dsr_v4(ctx, dport, &dsr);
+#else
 		ret2 = handle_dsr_v4(ctx, &dsr);
+#endif
 		if (ret2 != 0)
 			return ret2;
 

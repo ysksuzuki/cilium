@@ -355,6 +355,10 @@ func (l *Loader) Reinitialize(ctx context.Context, o datapath.BaseProgramOwner, 
 		args[initArgTunnelMode] = option.TunnelVXLAN
 	}
 
+	if option.Config.Tunnel == option.TunnelDisabled && option.Config.NodePortMode == option.NodePortModeDSR {
+		args[initArgTunnelMode] = option.TunnelGeneve
+	}
+
 	args[initArgTunnelPort] = "<nil>"
 	switch args[initArgTunnelMode] {
 	case option.TunnelVXLAN, option.TunnelGeneve:
