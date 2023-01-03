@@ -221,6 +221,20 @@ static __always_inline int handle_ipv4(struct __ctx_buff *ctx, __u32 *identity)
 		if (ret < 0)
 			return ret;
 	}
+
+#ifdef ENABLE_DSR
+#if DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	{
+		struct geneve_opt gopt;
+
+		int ret = ctx_get_tunnel_opt(ctx, &gopt, sizeof(gopt));
+		if (ret > 0) {
+			ctx_store_meta(ctx, CB_PORT_2, bpf_ntohl(gopt.opt_data[0]) & DSR_IPV4_DPORT_MASK);
+			ctx_store_meta(ctx, CB_ADDR_V4_2, bpf_ntohl(gopt.opt_data[1]));
+		}
+	}
+#endif /* DSR_ENCAP_MODE */
+#endif /* ENABLE_DSR */
 #endif
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;

@@ -95,16 +95,22 @@ static __always_inline __maybe_unused void ctx_set_xfer(struct xdp_md *ctx,
 static __always_inline __maybe_unused void ctx_move_xfer(struct xdp_md *ctx)
 {
 	__u32 meta_xfer = ctx_load_meta(ctx, XFER_MARKER);
+	int meta_size = 4;
+#ifdef ENABLE_DSR
+#if DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	meta_size = 6;
+#endif /* DSR_ENCAP_MODE */
+#endif /* ENABLE_DSR */
 
 	/* We transfer data from XFER_MARKER. This specifically
 	 * does not break packet trains in GRO.
 	 */
 	if (meta_xfer & XFER_PKT_ENCAP) {
-		if (!ctx_adjust_meta(ctx, -(int)(4 * sizeof(__u32)))) {
+		if (!ctx_adjust_meta(ctx, -(int)(meta_size * sizeof(__u32)))) {
 			__u32 *data_meta = ctx_data_meta(ctx);
 			__u32 *data = ctx_data(ctx);
 
-			if (!ctx_no_room(data_meta + 4, data)) {
+			if (!ctx_no_room(data_meta + meta_size, data)) {
 				data_meta[XFER_FLAGS] = meta_xfer;
 				data_meta[XFER_ENCAP_NODEID] =
 					ctx_load_meta(ctx, CB_ENCAP_NODEID);
@@ -112,6 +118,14 @@ static __always_inline __maybe_unused void ctx_move_xfer(struct xdp_md *ctx)
 					ctx_load_meta(ctx, CB_ENCAP_SECLABEL);
 				data_meta[XFER_ENCAP_DSTID] =
 					ctx_load_meta(ctx, CB_ENCAP_DSTID);
+#ifdef ENABLE_DSR
+#if DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+				data_meta[XFER_ENCAP_PORT] =
+					ctx_load_meta(ctx, CB_ENCAP_PORT);
+				data_meta[XFER_ENCAP_ADDR] =
+					ctx_load_meta(ctx, CB_ENCAP_ADDR);
+#endif /* DSR_ENCAP_MODE */
+#endif /* ENABLE_DSR */
 			}
 		}
 	} else if (meta_xfer) {
@@ -159,6 +173,20 @@ ctx_set_encap_info(struct xdp_md *ctx __maybe_unused,
 
 	return CTX_ACT_OK;
 }
+
+#ifdef ENABLE_DSR
+#if DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+static __always_inline int
+ctx_set_encap_opt(struct xdp_md *ctx, struct geneve_opt *gopt)
+{
+	ctx_store_meta(ctx, CB_ENCAP_PORT, bpf_ntohl(gopt->opt_data[0]));
+	ctx_store_meta(ctx, CB_ENCAP_ADDR, bpf_ntohl(gopt->opt_data[1]));
+
+	return CTX_ACT_OK;
+}
+
+#endif /* DSR_ENCAP_MODE */
+#endif /* ENABLE_DSR */
 #endif /* HAVE_ENCAP */
 
 #endif /* __LIB_OVERLOADABLE_XDP_H_ */

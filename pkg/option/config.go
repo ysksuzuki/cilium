@@ -1229,6 +1229,9 @@ const (
 	// DSR dispatch mode to encapsulate to IPIP
 	DSRDispatchIPIP = "ipip"
 
+	// DSR dispatch mode to encapsulate to Geneve
+	DSRDispatchGeneve = "geneve"
+
 	// DSR L4 translation to frontend port
 	DSRL4XlateFrontend = "frontend"
 
@@ -2448,7 +2451,8 @@ func (c *DaemonConfig) TunnelingEnabled() bool {
 // if the primary mode is native routing. For example, in the egress gateway,
 // we may send such traffic to a gateway node via a tunnel.
 func (c *DaemonConfig) TunnelExists() bool {
-	return c.TunnelingEnabled() || c.EnableIPv4EgressGateway
+	return c.TunnelingEnabled() || c.EnableIPv4EgressGateway ||
+		(c.NodePortMode == NodePortModeDSR && c.LoadBalancerDSRDispatch == DSRDispatchGeneve)
 }
 
 // AreDevicesRequired returns true if the agent needs to attach to the native
