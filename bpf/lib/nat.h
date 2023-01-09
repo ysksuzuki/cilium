@@ -525,10 +525,6 @@ snat_v4_create_dsr(struct __ctx_buff *ctx, struct iphdr *ip4,
 {
 	struct ipv4_ct_tuple tuple = {};
 	struct ipv4_nat_entry state = {};
-	struct {
-		__be16 sport;
-		__be16 dport;
-	} l4hdr;
 	__u32 off;
 	int ret;
 
@@ -547,10 +543,8 @@ snat_v4_create_dsr(struct __ctx_buff *ctx, struct iphdr *ip4,
 #ifdef ENABLE_SCTP
 	case IPPROTO_SCTP:
 #endif  /* ENABLE_SCTP */
-		if (ctx_load_bytes(ctx, off, &l4hdr, sizeof(l4hdr)) < 0)
+		if (ctx_load_bytes(ctx, off, &tuple.dport, 4) < 0)
 			return DROP_INVALID;
-		tuple.dport = l4hdr.sport;
-		tuple.sport = l4hdr.dport;
 		break;
 	default:
 		/* NodePort svc can be reached only via TCP or UDP, so
@@ -1290,10 +1284,6 @@ snat_v6_create_dsr(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
 {
 	struct ipv6_ct_tuple tuple = {};
 	struct ipv6_nat_entry state = {};
-	struct {
-		__be16 sport;
-		__be16 dport;
-	} l4hdr;
 	int ret, hdrlen;
 	__u32 off;
 
@@ -1316,10 +1306,8 @@ snat_v6_create_dsr(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
 #ifdef ENABLE_SCTP
 	case IPPROTO_SCTP:
 #endif  /* ENABLE_SCTP */
-		if (ctx_load_bytes(ctx, off, &l4hdr, sizeof(l4hdr)) < 0)
+		if (ctx_load_bytes(ctx, off, &tuple.dport, 4) < 0)
 			return DROP_INVALID;
-		tuple.dport = l4hdr.sport;
-		tuple.sport = l4hdr.dport;
 		break;
 	default:
 		/* NodePort svc can be reached only via TCP or UDP, so
