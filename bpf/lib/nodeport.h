@@ -316,7 +316,7 @@ static __always_inline int handle_dsr_v6(struct __ctx_buff *ctx, bool *dsr)
 		return ret;
 
 	if (*dsr) {
-		if (snat_v6_create_dsr(ctx, &opt.addr, opt.port) < 0)
+		if (snat_v6_create_dsr(ctx, ip6, &opt.addr, opt.port) < 0)
 			return DROP_INVALID;
 	}
 
@@ -1479,7 +1479,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 			address = opt2;
 			*dsr = true;
 
-			if (snat_v4_create_dsr(ctx, address, dport) < 0)
+			if (snat_v4_create_dsr(ctx, ip4, address, dport) < 0)
 				return DROP_INVALID;
 		}
 	}
