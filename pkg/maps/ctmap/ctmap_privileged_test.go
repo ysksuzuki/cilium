@@ -360,14 +360,36 @@ func (k *CTMapPrivilegedTestSuite) TestOrphanNatGC(c *C) {
 	// Create the following entries and check that SNAT entries are NOT GC-ed
 	// (as we have the CT entry which they belong to):
 	//
-	//     CT:	TCP IN  10.0.2.10:50000  -> 10.20.30.40:1234
+	//     CT:	TCP OUT 10.0.2.10:50000  -> 10.20.30.40:1234	(Nodeport)
+	//     CT:	TCP IN  10.0.2.10:50000  -> 10.20.30.40:1234	(Pod)
 	//     NAT:	TCP OUT 10.20.30.40:1234 -> 10.0.2.10:50000 XLATE_SRC 10.0.2.20:40000
 
-	ctKey = &CtKey4Global{
+	ctKeyOut := &CtKey4Global{
 		TupleKey4Global: tuple.TupleKey4Global{
 			TupleKey4: tuple.TupleKey4{
-				DestAddr:   types.IPv4{10, 0, 2, 10},
 				SourceAddr: types.IPv4{10, 20, 30, 40},
+				DestAddr:   types.IPv4{10, 0, 2, 10},
+				SourcePort: 0x50c3,
+				DestPort:   0xd204,
+				NextHeader: u8proto.TCP,
+				Flags:      tuple.TUPLE_F_OUT,
+			},
+		},
+	}
+	ctValOut := &CtEntry{
+		TxPackets: 1,
+		TxBytes:   216,
+		Lifetime:  37459,
+	}
+	err = bpf.UpdateElement(ctMapTCP.Map.GetFd(), ctMapTCP.Map.Name(), unsafe.Pointer(ctKeyOut),
+		unsafe.Pointer(ctValOut), 0)
+	c.Assert(err, IsNil)
+
+	ctKeyIn := &CtKey4Global{
+		TupleKey4Global: tuple.TupleKey4Global{
+			TupleKey4: tuple.TupleKey4{
+				SourceAddr: types.IPv4{10, 20, 30, 40},
+				DestAddr:   types.IPv4{10, 0, 2, 10},
 				SourcePort: 0x50c3,
 				DestPort:   0xd204,
 				NextHeader: u8proto.TCP,
@@ -375,13 +397,14 @@ func (k *CTMapPrivilegedTestSuite) TestOrphanNatGC(c *C) {
 			},
 		},
 	}
-	ctVal = &CtEntry{
+	ctValIn := &CtEntry{
 		TxPackets: 1,
 		TxBytes:   216,
 		Lifetime:  37459,
 	}
-	err = bpf.UpdateElement(ctMapTCP.Map.GetFd(), ctMapTCP.Map.Name(), unsafe.Pointer(ctKey),
-		unsafe.Pointer(ctVal), 0)
+
+	err = bpf.UpdateElement(ctMapTCP.Map.GetFd(), ctMapTCP.Map.Name(), unsafe.Pointer(ctKeyIn),
+		unsafe.Pointer(ctValIn), 0)
 	c.Assert(err, IsNil)
 
 	natKey = &nat.NatKey4{
@@ -389,8 +412,8 @@ func (k *CTMapPrivilegedTestSuite) TestOrphanNatGC(c *C) {
 			TupleKey4: tuple.TupleKey4{
 				SourceAddr: types.IPv4{10, 20, 30, 40},
 				DestAddr:   types.IPv4{10, 0, 2, 10},
-				SourcePort: 0xd204,
-				DestPort:   0x50c3,
+				SourcePort: 0x50c3,
+				DestPort:   0xd204,
 				NextHeader: u8proto.TCP,
 				Flags:      tuple.TUPLE_F_OUT,
 			},
@@ -416,9 +439,25 @@ func (k *CTMapPrivilegedTestSuite) TestOrphanNatGC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(buf), Equals, 1)
 
-	// Now remove the CT entry which should remove the NAT entry
-	err = bpf.DeleteElement(ctMapTCP.Map.GetFd(), unsafe.Pointer(ctKey))
+	// Remove the IN CT entry. The NAT entry should remain.
+	err = bpf.DeleteElement(ctMapTCP.Map.GetFd(), unsafe.Pointer(ctKeyIn))
 	c.Assert(err, IsNil)
+
+	stats = PurgeOrphanNATEntries(ctMapTCP, ctMapTCP)
+	c.Assert(stats.IngressAlive, Equals, uint32(0))
+	c.Assert(stats.IngressDeleted, Equals, uint32(0))
+	c.Assert(stats.EgressAlive, Equals, uint32(1))
+	c.Assert(stats.EgressDeleted, Equals, uint32(0))
+	// Check that the NAT entry is still there
+	buf = make(map[string][]string)
+	err = natMap.Map.Dump(buf)
+	c.Assert(err, IsNil)
+	c.Assert(len(buf), Equals, 1)
+
+	// Now remove the OUT CT entry, which should also remove the NAT entry.
+	err = bpf.DeleteElement(ctMapTCP.Map.GetFd(), unsafe.Pointer(ctKeyOut))
+	c.Assert(err, IsNil)
+
 	stats = PurgeOrphanNATEntries(ctMapTCP, ctMapTCP)
 	c.Assert(stats.IngressAlive, Equals, uint32(0))
 	c.Assert(stats.IngressDeleted, Equals, uint32(0))
