@@ -1458,25 +1458,22 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 	 * w/o option (5 x 32-bit words) + the DSR option (2 x 32-bit words)).
 	 */
 	if (ip4->ihl == 0x7) {
-		__u32 opt1 = 0, opt2 = 0;
+		struct {
+			__be32 opt1;
+			__be32 opt2;
+		} opts;
 		__be32 address;
 		__be16 dport;
+		__u32 opt1;
 
 		if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
-				   &opt1, sizeof(opt1)) < 0)
+				   &opts, sizeof(opts)) < 0)
 			return DROP_INVALID;
 
-		opt1 = bpf_ntohl(opt1);
+		opt1 = bpf_ntohl(opts.opt1);
 		if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_32) {
-			if (ctx_load_bytes(ctx, ETH_HLEN +
-					   sizeof(struct iphdr) +
-					   sizeof(opt1),
-					   &opt2, sizeof(opt2)) < 0)
-				return DROP_INVALID;
-
-			opt2 = bpf_ntohl(opt2);
+			address = bpf_ntohl(opts.opt2);
 			dport = opt1 & DSR_IPV4_DPORT_MASK;
-			address = opt2;
 			*dsr = true;
 
 			if (snat_v4_create_dsr(ctx, ip4, address, dport) < 0)
