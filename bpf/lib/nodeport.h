@@ -301,24 +301,19 @@ static __always_inline int find_dsr_v6(struct __ctx_buff *ctx, __u8 nexthdr,
 	return DROP_INVALID_EXTHDR;
 }
 
-static __always_inline int handle_dsr_v6(struct __ctx_buff *ctx, bool *dsr)
+static __always_inline int
+nodeport_extract_dsr6(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
+		      union v6addr *addr, __be16 *port, bool *dsr)
 {
 	struct dsr_opt_v6 opt __align_stack_8 = {};
-	void *data, *data_end;
-	struct ipv6hdr *ip6;
 	int ret;
-
-	if (!revalidate_data(ctx, &data, &data_end, &ip6))
-		return DROP_INVALID;
 
 	ret = find_dsr_v6(ctx, ip6->nexthdr, &opt, dsr);
 	if (ret != 0)
 		return ret;
 
-	if (*dsr) {
-		if (snat_v6_create_dsr(ctx, ip6, &opt.addr, opt.port) < 0)
-			return DROP_INVALID;
-	}
+	*addr = opt.addr;
+	*port = opt.port;
 
 	return 0;
 }
@@ -331,12 +326,13 @@ static __always_inline int xlate_dsr_v6(struct __ctx_buff *ctx,
 	struct ipv6_nat_entry *entry;
 
 	nat_tup.flags = NAT_DIR_EGRESS;
-	nat_tup.sport = tuple->dport;
-	nat_tup.dport = tuple->sport;
 
 	entry = snat_v6_lookup(&nat_tup);
 	if (!entry)
 		return 0;
+
+	nat_tup.sport = tuple->dport;
+	nat_tup.dport = tuple->sport;
 
 	ctx_snat_done_set(ctx);
 	return snat_v6_rewrite_egress(ctx, &nat_tup, entry, l4_off);
@@ -821,7 +817,7 @@ static __always_inline int nodeport_lb6(struct __ctx_buff *ctx,
 	void *data, *data_end;
 	struct ipv6hdr *ip6;
 	struct csum_offset csum_off = {};
-	struct lb6_service *svc;
+	struct lb6_service *svc = NULL;
 	struct lb6_key key = {};
 	struct ct_state ct_state_new = {};
 	bool backend_local;
@@ -897,8 +893,22 @@ skip_service_lookup:
 #endif
 		ctx_set_xfer(ctx, XFER_PKT_NO_SVC);
 
-		if (nodeport_uses_dsr6(&tuple))
+#ifdef ENABLE_DSR
+		if (nodeport_uses_dsr6(&tuple)) {
+			bool dsr = false;
+
+			ret = nodeport_extract_dsr6(ctx, ip6, &key.address,
+						    &key.dport, &dsr);
+			if (IS_ERR(ret))
+				return ret;
+			if (dsr) {
+				backend_local = true;
+				goto ct_lookup_dsr;
+			}
+
 			return CTX_ACT_OK;
+		}
+#endif /* ENABLE_DSR */
 
 		ctx_store_meta(ctx, CB_NAT_46X64, 0);
 		ctx_store_meta(ctx, CB_SRC_LABEL, src_identity);
@@ -912,25 +922,39 @@ skip_service_lookup:
 	if (backend_local || !nodeport_uses_dsr6(&tuple)) {
 		struct ct_state ct_state = {};
 
+#ifdef ENABLE_DSR
+ct_lookup_dsr:
+#endif
 		ret = ct_lookup6(get_ct_map6(&tuple), &tuple, ctx, l4_off,
 				 CT_EGRESS, &ct_state, &monitor);
 		switch (ret) {
 		case CT_NEW:
 redo:
 			ct_state_new.src_sec_id = WORLD_ID;
-			ct_state_new.node_port = 1;
+			if (svc)
+				ct_state_new.node_port = 1;
+			else
+				ct_state_new.dsr = 1;
 			ct_state_new.ifindex = (__u16)NATIVE_DEV_IFINDEX;
 			ret = ct_create6(get_ct_map6(&tuple), NULL, &tuple, ctx,
 					 CT_EGRESS, &ct_state_new, false, false, false);
 			if (IS_ERR(ret))
 				return ret;
+
+#ifdef ENABLE_DSR
+			if (!svc && snat_v6_create_dsr(&tuple, &key.address, key.dport))
+				return DROP_INVALID;
+#endif
 			break;
 		case CT_REOPENED:
 		case CT_ESTABLISHED:
 		case CT_REPLY:
-			if (unlikely(ct_state.rev_nat_index !=
-				     svc->rev_nat_index))
+			if (svc && unlikely(ct_state.rev_nat_index != svc->rev_nat_index))
 				goto redo;
+
+			if (!svc && unlikely(!ct_state.dsr))
+				goto redo;
+
 			break;
 		default:
 			return DROP_UNKNOWN_CT;
@@ -1446,14 +1470,10 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 }
 #endif /* DSR_ENCAP_MODE */
 
-static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
+static __always_inline int
+nodeport_extract_dsr4(struct __ctx_buff *ctx, struct iphdr *ip4,
+		      __be32 *addr, __be16 *port, bool *dsr)
 {
-	void *data, *data_end;
-	struct iphdr *ip4;
-
-	if (!revalidate_data(ctx, &data, &data_end, &ip4))
-		return DROP_INVALID;
-
 	/* Check whether IPv4 header contains a 64-bit option (IPv4 header
 	 * w/o option (5 x 32-bit words) + the DSR option (2 x 32-bit words)).
 	 */
@@ -1462,8 +1482,6 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 			__be32 opt1;
 			__be32 opt2;
 		} opts;
-		__be32 address;
-		__be16 dport;
 		__u32 opt1;
 
 		if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
@@ -1472,12 +1490,9 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 
 		opt1 = bpf_ntohl(opts.opt1);
 		if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_32) {
-			address = bpf_ntohl(opts.opt2);
-			dport = opt1 & DSR_IPV4_DPORT_MASK;
+			*addr = bpf_ntohl(opts.opt2);
+			*port = opt1 & DSR_IPV4_DPORT_MASK;
 			*dsr = true;
-
-			if (snat_v4_create_dsr(ctx, ip4, address, dport) < 0)
-				return DROP_INVALID;
 		}
 	}
 
@@ -1492,12 +1507,16 @@ static __always_inline int xlate_dsr_v4(struct __ctx_buff *ctx,
 	struct ipv4_nat_entry *entry;
 
 	nat_tup.flags = NAT_DIR_EGRESS;
-	nat_tup.sport = tuple->dport;
-	nat_tup.dport = tuple->sport;
 
 	entry = snat_v4_lookup(&nat_tup);
 	if (!entry)
 		return 0;
+
+	/* The ports in the CT tuple are in reverse order. Flip them, so that
+	 * snat_v4_rewrite_egress() can work on the actual header content:
+	 */
+	nat_tup.sport = tuple->dport;
+	nat_tup.dport = tuple->sport;
 
 	ctx_snat_done_set(ctx);
 	return snat_v4_rewrite_egress(ctx, &nat_tup, entry, l4_off, has_l4_header);
@@ -1881,7 +1900,7 @@ static __always_inline int nodeport_lb4(struct __ctx_buff *ctx,
 	struct iphdr *ip4;
 	int ret,  l3_off = ETH_HLEN, l4_off;
 	struct csum_offset csum_off = {};
-	struct lb4_service *svc;
+	struct lb4_service *svc = NULL;
 	struct lb4_key key = {};
 	struct ct_state ct_state_new = {};
 	bool backend_local, l4_ports;
@@ -1959,10 +1978,30 @@ skip_service_lookup:
 		 */
 		ctx_set_xfer(ctx, XFER_PKT_NO_SVC);
 
-#ifndef ENABLE_MASQUERADE
-		if (nodeport_uses_dsr4(&tuple))
+#ifdef ENABLE_DSR
+		if (nodeport_uses_dsr4(&tuple)) {
+			bool dsr = false;
+
+			ret = nodeport_extract_dsr4(ctx, ip4, &key.address,
+						    &key.dport, &dsr);
+			if (IS_ERR(ret))
+				return ret;
+			if (dsr) {
+				backend_local = true;
+				goto ct_lookup_dsr;
+			}
+
+# ifndef ENABLE_MASQUERADE
+			/* The packet is DSR-eligible, so we know for sure that it is
+			 * not reply traffic by a remote backend which would require
+			 * forwarding / revDNAT. If BPF-Masquerading is off, there is no
+			 * other reason to tail-call CILIUM_CALL_IPV4_NODEPORT_NAT_INGRESS.
+			 */
 			return CTX_ACT_OK;
-#endif
+# endif /* ENABLE_MASQUERADE */
+		}
+#endif /* ENABLE_DSR */
+
 		ctx_store_meta(ctx, CB_SRC_LABEL, src_identity);
 		/* For NAT64 we might see an IPv4 reply from the backend to
 		 * the LB entering this path. Thus, transform back to IPv6.
@@ -1992,24 +2031,47 @@ skip_service_lookup:
 	backend_local = __lookup_ip4_endpoint(tuple.daddr);
 	if (!backend_local && lb4_svc_is_hostport(svc))
 		return DROP_INVALID;
-	/* Reply from DSR packet is never seen on this node again
-	 * hence no need to track in here.
+
+	/* This part handles the forwarding of a NATed SVC request to its
+	 * backend:
+	 * - for local backends and non-DSR connections we add a CT entry,
+	 *   so that reply traffic can be RevDNATed.
+	 * - if the backend is local, we can just pass the request up
+	 *   with CTX_ACT_OK.
+	 * - for remote backends, we continue in the egress tail-call for
+	 *   either DSR or NAT.
+	 *
+	 * The CT code also gets used by remote DSR backends, so that we
+	 * can RevDNAT their replies before sending them to the client.
+	 * In this case the code below gets called with svc == NULL,
+	 * and the DSR info in the lb4_key.
 	 */
 	if (backend_local || !nodeport_uses_dsr4(&tuple)) {
 		struct ct_state ct_state = {};
 
+#ifdef ENABLE_DSR
+ct_lookup_dsr:
+#endif
 		ret = ct_lookup4(get_ct_map4(&tuple), &tuple, ctx, l4_off,
 				 CT_EGRESS, &ct_state, &monitor);
 		switch (ret) {
 		case CT_NEW:
 redo:
 			ct_state_new.src_sec_id = WORLD_ID;
-			ct_state_new.node_port = 1;
+			if (svc)
+				ct_state_new.node_port = 1;
+			else
+				ct_state_new.dsr = 1;
 			ct_state_new.ifindex = (__u16)NATIVE_DEV_IFINDEX;
 			ret = ct_create4(get_ct_map4(&tuple), NULL, &tuple, ctx,
 					 CT_EGRESS, &ct_state_new, false, false, false);
 			if (IS_ERR(ret))
 				return ret;
+
+#ifdef ENABLE_DSR
+			if (!svc && snat_v4_create_dsr(&tuple, key.address, key.dport))
+				return DROP_INVALID;
+#endif
 			break;
 		case CT_REOPENED:
 		case CT_ESTABLISHED:
@@ -2017,8 +2079,10 @@ redo:
 			/* Recreate CT entries, as the existing one is stale and
 			 * belongs to a flow which target a different svc.
 			 */
-			if (unlikely(ct_state.rev_nat_index !=
-				     svc->rev_nat_index))
+			if (svc && unlikely(ct_state.rev_nat_index != svc->rev_nat_index))
+				goto redo;
+
+			if (!svc && unlikely(!ct_state.dsr))
 				goto redo;
 			break;
 		default:

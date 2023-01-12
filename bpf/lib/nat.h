@@ -520,48 +520,22 @@ snat_v4_rev_nat_can_skip(const struct ipv4_nat_target *target, const struct ipv4
 }
 
 static __always_inline __maybe_unused int
-snat_v4_create_dsr(struct __ctx_buff *ctx, struct iphdr *ip4,
-		   __be32 to_saddr, __be16 to_sport)
+snat_v4_create_dsr(struct ipv4_ct_tuple *tuple, __be32 to_saddr, __be16 to_sport)
 {
-	struct ipv4_ct_tuple tuple = {};
 	struct ipv4_nat_entry state = {};
-	__u32 off;
 	int ret;
 
 	build_bug_on(sizeof(struct ipv4_nat_entry) > 64);
-
-	tuple.nexthdr = ip4->protocol;
-	tuple.daddr = ip4->saddr;
-	tuple.saddr = ip4->daddr;
-	tuple.flags = NAT_DIR_EGRESS;
-
-	off = ETH_HLEN + ipv4_hdrlen(ip4);
-
-	switch (tuple.nexthdr) {
-	case IPPROTO_TCP:
-	case IPPROTO_UDP:
-#ifdef ENABLE_SCTP
-	case IPPROTO_SCTP:
-#endif  /* ENABLE_SCTP */
-		if (ctx_load_bytes(ctx, off, &tuple.dport, 4) < 0)
-			return DROP_INVALID;
-		break;
-	default:
-		/* NodePort svc can be reached only via TCP or UDP, so
-		 * drop the rest.
-		 */
-		return DROP_NAT_UNSUPP_PROTO;
-	}
 
 	state.common.created = bpf_mono_now();
 	state.to_saddr = to_saddr;
 	state.to_sport = to_sport;
 
-	ret = map_update_elem(&SNAT_MAPPING_IPV4, &tuple, &state, 0);
+	ret = map_update_elem(&SNAT_MAPPING_IPV4, tuple, &state, 0);
 	if (ret)
 		return ret;
 
-	return CTX_ACT_OK;
+	return 0;
 }
 
 static __always_inline void snat_v4_init_tuple(const struct iphdr *ip4,
@@ -1279,52 +1253,23 @@ snat_v6_rev_nat_can_skip(const struct ipv6_nat_target *target, const struct ipv6
 }
 
 static __always_inline __maybe_unused int
-snat_v6_create_dsr(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
-		   const union v6addr *to_saddr, __be16 to_sport)
+snat_v6_create_dsr(struct ipv6_ct_tuple *tuple, const union v6addr *to_saddr,
+		   __be16 to_sport)
 {
-	struct ipv6_ct_tuple tuple = {};
 	struct ipv6_nat_entry state = {};
-	int ret, hdrlen;
-	__u32 off;
+	int ret;
 
 	build_bug_on(sizeof(struct ipv6_nat_entry) > 64);
-
-	tuple.nexthdr = ip6->nexthdr;
-	hdrlen = ipv6_hdrlen(ctx, &tuple.nexthdr);
-	if (hdrlen < 0)
-		return hdrlen;
-
-	ipv6_addr_copy(&tuple.daddr, (union v6addr *)&ip6->saddr);
-	ipv6_addr_copy(&tuple.saddr, (union v6addr *)&ip6->daddr);
-	tuple.flags = NAT_DIR_EGRESS;
-
-	off = ETH_HLEN + hdrlen;
-
-	switch (tuple.nexthdr) {
-	case IPPROTO_TCP:
-	case IPPROTO_UDP:
-#ifdef ENABLE_SCTP
-	case IPPROTO_SCTP:
-#endif  /* ENABLE_SCTP */
-		if (ctx_load_bytes(ctx, off, &tuple.dport, 4) < 0)
-			return DROP_INVALID;
-		break;
-	default:
-		/* NodePort svc can be reached only via TCP or UDP, so
-		 * drop the rest.
-		 */
-		return DROP_NAT_UNSUPP_PROTO;
-	}
 
 	state.common.created = bpf_mono_now();
 	ipv6_addr_copy(&state.to_saddr, to_saddr);
 	state.to_sport = to_sport;
 
-	ret = map_update_elem(&SNAT_MAPPING_IPV6, &tuple, &state, 0);
+	ret = map_update_elem(&SNAT_MAPPING_IPV6, tuple, &state, 0);
 	if (ret)
 		return ret;
 
-	return CTX_ACT_OK;
+	return 0;
 }
 
 static __always_inline void snat_v6_init_tuple(const struct ipv6hdr *ip6,

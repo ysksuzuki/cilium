@@ -812,6 +812,22 @@ ct_update6_dsr(const void *map, const struct ipv6_ct_tuple *tuple,
 	entry->dsr = dsr;
 }
 
+static __always_inline bool
+ct_has_dsr_egress_entry6(const void *map, struct ipv6_ct_tuple *ingress_tuple)
+{
+	__u8 prev_flags = ingress_tuple->flags;
+	struct ct_entry *entry;
+
+	ingress_tuple->flags = TUPLE_F_OUT;
+	entry = map_lookup_elem(map, ingress_tuple);
+	ingress_tuple->flags = prev_flags;
+
+	if (entry)
+		return entry->dsr;
+
+	return 0;
+}
+
 /* Offset must point to IPv6 */
 static __always_inline int ct_create6(const void *map_main, const void *map_related,
 				      struct ipv6_ct_tuple *tuple,
@@ -920,6 +936,22 @@ ct_update4_dsr(const void *map, const struct ipv4_ct_tuple *tuple,
 		return;
 
 	entry->dsr = dsr;
+}
+
+static __always_inline bool
+ct_has_dsr_egress_entry4(const void *map, struct ipv4_ct_tuple *ingress_tuple)
+{
+	__u8 prev_flags = ingress_tuple->flags;
+	struct ct_entry *entry;
+
+	ingress_tuple->flags = TUPLE_F_OUT;
+	entry = map_lookup_elem(map, ingress_tuple);
+	ingress_tuple->flags = prev_flags;
+
+	if (entry)
+		return entry->dsr;
+
+	return 0;
 }
 
 static __always_inline int ct_create4(const void *map_main,

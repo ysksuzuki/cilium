@@ -1471,11 +1471,7 @@ skip_policy_enforcement:
 	if (ret == CT_NEW || ret == CT_REOPENED) {
 		bool dsr = false;
 # ifdef ENABLE_DSR
-		int ret2;
-
-		ret2 = handle_dsr_v6(ctx, &dsr);
-		if (ret2 != 0)
-			return ret2;
+		dsr = ct_has_dsr_egress_entry6(get_ct_map6(tuple), tuple);
 
 		ct_state_new.dsr = dsr;
 		if (ret == CT_REOPENED && ct_state->dsr != dsr)
@@ -1805,11 +1801,7 @@ skip_policy_enforcement:
 	if (ret == CT_NEW || ret == CT_REOPENED) {
 		bool dsr = false;
 # ifdef ENABLE_DSR
-		int ret2;
-
-		ret2 = handle_dsr_v4(ctx, &dsr);
-		if (ret2 != 0)
-			return ret2;
+		dsr = ct_has_dsr_egress_entry4(get_ct_map4(tuple), tuple);
 
 		ct_state_new.dsr = dsr;
 		if (ret == CT_REOPENED && ct_state->dsr != dsr)
