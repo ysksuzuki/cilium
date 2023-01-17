@@ -1197,8 +1197,8 @@ static __always_inline int lb4_extract_key(struct __ctx_buff *ctx __maybe_unused
 }
 
 static __always_inline int
-lb4_extract_tuple(struct __ctx_buff *ctx, struct iphdr *ip4, int *l4_off,
-		  struct ipv4_ct_tuple *tuple)
+lb4_extract_tuple(struct __ctx_buff *ctx, struct iphdr *ip4, bool *has_l4_header,
+		  int *l4_off, struct ipv4_ct_tuple *tuple)
 {
 	tuple->nexthdr = ip4->protocol;
 	tuple->daddr = ip4->daddr;
@@ -1213,7 +1213,7 @@ lb4_extract_tuple(struct __ctx_buff *ctx, struct iphdr *ip4, int *l4_off,
 	case IPPROTO_SCTP:
 #endif  /* ENABLE_SCTP */
 		return ipv4_ct_extract_l4_ports(ctx, *l4_off, CT_EGRESS,
-						tuple, NULL);
+						tuple, has_l4_header);
 	case IPPROTO_ICMP:
 		return DROP_NO_SERVICE;
 	default:

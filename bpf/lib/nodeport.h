@@ -2122,13 +2122,14 @@ nodeport_rev_dnat_fwd_ipv4(struct __ctx_buff *ctx, struct trace_ctx *trace)
 	int ret, l3_off = ETH_HLEN, l4_off;
 	struct ipv4_ct_tuple tuple = {};
 	struct ct_state ct_state = {};
+	bool has_l4_header = true;
 	void *data, *data_end;
 	struct iphdr *ip4;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 
-	ret = lb4_extract_tuple(ctx, ip4, &l4_off, &tuple);
+	ret = lb4_extract_tuple(ctx, ip4, &has_l4_header, &l4_off, &tuple);
 	if (ret < 0) {
 		/* If it's not a SVC protocol, we don't need to check for RevDNAT: */
 		if (ret == DROP_NO_SERVICE || ret == DROP_UNKNOWN_L4)
@@ -2150,7 +2151,7 @@ nodeport_rev_dnat_fwd_ipv4(struct __ctx_buff *ctx, struct trace_ctx *trace)
 
 		ret = lb4_rev_nat(ctx, l3_off, l4_off, &csum_off, &ct_state,
 				  &tuple, REV_NAT_F_TUPLE_SADDR,
-				  ipv4_has_l4_header(ip4));
+				  has_l4_header);
 		if (IS_ERR(ret))
 			return ret;
 
@@ -2185,6 +2186,7 @@ static __always_inline int rev_nodeport_lb4(struct __ctx_buff *ctx, __u32 *ifind
 	bool l2_hdr_required = true;
 	__u32 tunnel_endpoint __maybe_unused = 0;
 	__u32 dst_id __maybe_unused = 0;
+	bool has_l4_header = true;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
@@ -2198,7 +2200,7 @@ static __always_inline int rev_nodeport_lb4(struct __ctx_buff *ctx, __u32 *ifind
 		goto encap_redirect;
 #endif /* ENABLE_EGRESS_GATEWAY */
 
-	ret = lb4_extract_tuple(ctx, ip4, &l4_off, &tuple);
+	ret = lb4_extract_tuple(ctx, ip4, &has_l4_header, &l4_off, &tuple);
 	if (ret < 0) {
 		/* If it's not a SVC protocol, we don't need to check for RevDNAT: */
 		if (ret == DROP_NO_SERVICE || ret == DROP_UNKNOWN_L4)
@@ -2218,7 +2220,7 @@ static __always_inline int rev_nodeport_lb4(struct __ctx_buff *ctx, __u32 *ifind
 		reason = TRACE_REASON_CT_REPLY;
 		ret2 = lb4_rev_nat(ctx, l3_off, l4_off, &csum_off,
 				   &ct_state, &tuple,
-				   REV_NAT_F_TUPLE_SADDR, ipv4_has_l4_header(ip4));
+				   REV_NAT_F_TUPLE_SADDR, has_l4_header);
 		if (IS_ERR(ret2))
 			return ret2;
 
