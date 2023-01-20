@@ -1445,8 +1445,53 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 
 	return 0;
 }
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+static __always_inline int dsr_encap_geneve_opt4(struct __ctx_buff *ctx,
+						 struct iphdr *ip4, __u32 *ifindex)
+{
+	struct remote_endpoint_info *info = NULL;
+	struct geneve_opt4 gopt;
+
+	info = ipcache_lookup4(&IPCACHE_MAP, ip4->daddr, V4_CACHE_KEY_LEN, 0);
+	if (info && info->tunnel_endpoint != 0) {
+		memset(&gopt, 0, sizeof(gopt));
+		gopt.opt_class = bpf_htons(0x102);
+		gopt.type = 0x08;
+		gopt.r1 = 0;
+		gopt.r2 = 0;
+		gopt.r3 = 0;
+		gopt.length = 2;
+		gopt.opt_data[0] = bpf_htonl(ctx_load_meta(ctx, CB_PORT));
+		gopt.opt_data[1] = bpf_htonl(ctx_load_meta(ctx, CB_ADDR_V4));
+
+		return  __encap_with_nodeid_opt(ctx, info->tunnel_endpoint,
+						WORLD_ID,
+						info->sec_label,
+						NOT_VTEP_DST,
+						&gopt,
+						(enum trace_reason)CT_NEW,
+						TRACE_PAYLOAD_LEN,
+						ifindex);
+	}
+
+	return CTX_ACT_DROP;
+}
 #endif /* DSR_ENCAP_MODE */
 
+#if DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, __be16 dport, bool *dsr)
+{
+	__be32 address = ctx_load_meta(ctx, CB_ADDR_V4_2);
+
+	if (dport != 0 && address != 0) {
+		*dsr = true;
+		if (snat_v4_create_dsr(ctx, address, dport) < 0)
+			return DROP_INVALID;
+	}
+
+	return 0;
+}
+#else
 static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 {
 	void *data, *data_end;
@@ -1487,6 +1532,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 
 	return 0;
 }
+#endif /* DSR_ENCAP_GENEVE */
 
 static __always_inline int xlate_dsr_v4(struct __ctx_buff *ctx,
 					const struct ipv4_ct_tuple *tuple,
@@ -1640,6 +1686,7 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	__u16 port;
 	__be16 ohead = 0;
 	int ret, ext_err = 0;
+	int verdict = CTX_ACT_REDIRECT;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
 		ret = DROP_INVALID;
@@ -1656,6 +1703,12 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	ret = dsr_set_opt4(ctx, ip4,
 			   addr,
 			   port, &ohead);
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	ret = dsr_encap_geneve_opt4(ctx, ip4, &fib_params.l.ifindex);
+	if (!IS_ERR(ret)) {
+		verdict = ret;
+		goto out_send;
+	}
 #else
 # error "Invalid load balancer DSR encapsulation mode!"
 #endif
@@ -1695,7 +1748,12 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	}
 out_send:
 	cilium_capture_out(ctx);
-	return ctx_redirect(ctx, fib_params.l.ifindex, 0);
+
+	if (verdict == CTX_ACT_REDIRECT)
+		return ctx_redirect(ctx, fib_params.l.ifindex, 0);
+
+	ctx_move_xfer(ctx);
+	return verdict;
 drop_err:
 	return send_drop_notify_error_ext(ctx, 0, ret, ext_err, CTX_ACT_DROP, METRIC_EGRESS);
 }
@@ -2046,7 +2104,7 @@ redo:
 		ctx_store_meta(ctx, CB_HINT,
 			       ((__u32)tuple.sport << 16) | tuple.dport);
 		ctx_store_meta(ctx, CB_ADDR_V4, tuple.daddr);
-#elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE || DSR_ENCAP_MODE == DSR_ENCAP_NONE
 		ctx_store_meta(ctx, CB_PORT, key.dport);
 		ctx_store_meta(ctx, CB_ADDR_V4, key.address);
 #endif /* DSR_ENCAP_MODE */

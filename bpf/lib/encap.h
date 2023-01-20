@@ -273,5 +273,46 @@ encap_and_redirect_netdev(struct __ctx_buff *ctx, struct endpoint_key *k,
 }
 #endif /* TUNNEL_MODE */
 
+#if defined(ENABLE_DSR) && DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+static __always_inline int
+__encap_with_nodeid_opt(struct __ctx_buff *ctx, __u32 tunnel_endpoint,
+			__u32 seclabel, __u32 dstid, __u32 vni,
+			struct geneve_opt4 *gopt,
+			enum trace_reason ct_reason,
+			__u32 monitor,
+			__u32 *ifindex)
+{
+	int ret_opt;
+	int ret = __encap_with_nodeid(ctx, tunnel_endpoint, seclabel, dstid,
+				      vni, ct_reason, monitor,
+				      ifindex);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret_opt = ctx_set_encap_opt4(ctx, gopt);
+	if (unlikely(ret_opt < 0))
+		return ret_opt;
+
+	return ret;
+}
+
+static __always_inline int
+encap_and_redirect_with_nodeid_opt(struct __ctx_buff *ctx, __u32 tunnel_endpoint,
+				   __u32 seclabel, __u32 dstid, __u32 vni,
+				   struct geneve_opt4 *gopt,
+				   const struct trace_ctx *trace)
+{
+	__u32 ifindex;
+
+	int ret = __encap_with_nodeid_opt(ctx, tunnel_endpoint, seclabel, dstid,
+				      vni, gopt, trace->reason, trace->monitor,
+				      &ifindex);
+	if (ret != CTX_ACT_REDIRECT)
+		return ret;
+
+	return ctx_redirect(ctx, ifindex, 0);
+}
+#endif
+
 #endif /* HAVE_ENCAP */
 #endif /* __LIB_ENCAP_H_ */

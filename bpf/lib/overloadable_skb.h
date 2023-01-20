@@ -203,6 +203,18 @@ ctx_set_encap_info(struct __sk_buff *ctx, __u32 node_id, __u32 seclabel,
 
 	return CTX_ACT_REDIRECT;
 }
+
+#if defined(ENABLE_DSR) && DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+static __always_inline int
+ctx_set_encap_opt4(struct __sk_buff *ctx, struct geneve_opt4 *gopt)
+{
+	int ret = ctx_set_tunnel_opt(ctx, gopt, sizeof(*gopt));
+
+	if (unlikely(ret < 0))
+		return DROP_WRITE_ERROR;
+	return 0;
+}
+#endif
 #endif /* HAVE_ENCAP */
 
 #endif /* __LIB_OVERLOADABLE_SKB_H_ */
