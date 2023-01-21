@@ -305,8 +305,19 @@ not_esp:
 		if (ep->flags & ENDPOINT_F_HOST)
 			goto to_host;
 
+#if defined(ENABLE_DSR) && DSR_ENCAP_MODE == DSR_ENCAP_GENEVE && \
+	!defined(TUNNEL_MODE) && !defined(ENABLE_HOST_ROUTING)
+		/* In combination with the direct routing mode, DSR with Geneve dispatch
+		 * and the legacy routing mode, we pass packets to the kernel stack.
+		 * Otherwise, the kernel stack will only be aware of NON-SYN packets
+		 * because we encapsulate SYN packet only in DSR with Geneve dispatch.
+		 */
+		ctx_change_type(ctx, PACKET_HOST);
+		return CTX_ACT_OK;
+#else
 		return ipv4_local_delivery(ctx, ETH_HLEN, *identity, ip4, ep,
 					   METRIC_INGRESS, false, false);
+#endif
 	}
 
 	/* A packet entering the node from the tunnel and not going to a local

@@ -1055,11 +1055,34 @@ int cil_from_netdev(struct __ctx_buff *ctx)
 
 	if (flags & XFER_PKT_ENCAP) {
 		edt_set_aggregate(ctx, 0);
+#if defined(ENABLE_DSR) && DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+		{
+			struct geneve_opt4 gopt;
 
+			memset(&gopt, 0, sizeof(gopt));
+			gopt.opt_class = bpf_htons(0x102);
+			gopt.type = 0x08;
+			gopt.r1 = 0;
+			gopt.r2 = 0;
+			gopt.r3 = 0;
+			gopt.length = 2;
+			gopt.opt_data[0] = bpf_htonl(ctx_get_xfer(ctx, XFER_ENCAP_PORT));
+			gopt.opt_data[1] = bpf_htonl(ctx_get_xfer(ctx, XFER_ENCAP_ADDR));
+
+			return encap_and_redirect_with_nodeid_opt4(ctx,
+							  ctx_get_xfer(ctx, XFER_ENCAP_NODEID),
+							  ctx_get_xfer(ctx, XFER_ENCAP_SECLABEL),
+							  ctx_get_xfer(ctx, XFER_ENCAP_DSTID),
+							  NOT_VTEP_DST,
+							  &gopt,
+							  &trace);
+		}
+#else
 		return __encap_and_redirect_with_nodeid(ctx, ctx_get_xfer(ctx, XFER_ENCAP_NODEID),
 							ctx_get_xfer(ctx, XFER_ENCAP_SECLABEL),
 							ctx_get_xfer(ctx, XFER_ENCAP_DSTID),
 							NOT_VTEP_DST, &trace);
+#endif
 	}
 #endif
 #endif

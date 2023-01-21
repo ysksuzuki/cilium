@@ -46,7 +46,8 @@
 #define CONDITIONAL_PREALLOC BPF_F_NO_PREALLOC
 #endif
 
-#if defined(ENCAP_IFINDEX) || defined(ENABLE_EGRESS_GATEWAY)
+#if defined(ENCAP_IFINDEX) || defined(ENABLE_EGRESS_GATEWAY) || \
+    (defined(ENABLE_DSR) && DSR_ENCAP_MODE == DSR_ENCAP_GENEVE)
 #define HAVE_ENCAP
 
 /* NOT_VTEP_DST is passed to an encapsulation function when the
@@ -75,6 +76,8 @@ enum {
 	XFER_ENCAP_NODEID = 1,
 	XFER_ENCAP_SECLABEL = 2,
 	XFER_ENCAP_DSTID = 3,
+	XFER_ENCAP_PORT = 4,
+	XFER_ENCAP_ADDR = 5,
 };
 
 /* These are shared with test/bpf/check-complexity.sh, when modifying any of
@@ -678,6 +681,7 @@ enum {
 #define	CB_ADDR_V6_3		CB_NAT		/* Alias, non-overlapping */
 #define	CB_FROM_HOST		CB_NAT		/* Alias, non-overlapping */
 #define CB_SRV6_SID_4		CB_NAT		/* Alias, non-overlapping */
+#define CB_ENCAP_PORT		CB_NAT		/* XDP */
 	CB_CT_STATE,
 #define	CB_ADDR_V6_4		CB_CT_STATE	/* Alias, non-overlapping */
 #define	CB_ENCRYPT_DST		CB_CT_STATE	/* Alias, non-overlapping,
@@ -685,6 +689,7 @@ enum {
 						 */
 #define	CB_CUSTOM_CALLS		CB_CT_STATE	/* Alias, non-overlapping */
 #define	CB_SRV6_VRF_ID		CB_CT_STATE	/* Alias, non-overlapping */
+#define	CB_ENCAP_ADDR		CB_CT_STATE /* XDP */
 };
 
 /* Magic values for CB_FROM_HOST.
@@ -1059,6 +1064,28 @@ struct lpm_val {
 	/* Just dummy for now. */
 	__u8 flags;
 };
+
+#if defined(ENABLE_DSR) && DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+struct geneve_opt4 {
+	__be16	opt_class;
+	__u8	type;
+	__u8	length:5;
+	__u8	r3:1;
+	__u8	r2:1;
+	__u8	r1:1;
+	__u32	opt_data[2];
+};
+
+struct geneve_opt6 {
+	__be16	opt_class;
+	__u8	type;
+	__u8	length:5;
+	__u8	r3:1;
+	__u8	r2:1;
+	__u8	r1:1;
+	__u32	opt_data[5];
+};
+#endif
 
 #include "overloadable.h"
 

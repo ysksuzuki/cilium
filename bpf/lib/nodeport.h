@@ -249,6 +249,46 @@ static __always_inline int dsr_set_ext6(struct __ctx_buff *ctx,
 		return DROP_INVALID;
 	return 0;
 }
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+static __always_inline int dsr_encap_geneve_opt6(struct __ctx_buff *ctx,
+						 struct ipv6hdr *ip6,
+						 const union v6addr *svc_addr,
+						 __be16 svc_port,
+						 __u32 *ifindex, bool *skip_fib)
+{
+	struct remote_endpoint_info *info;
+	union v6addr *dst;
+	struct geneve_opt6 gopt;
+
+	dst = (union v6addr *)&ip6->daddr;
+	info = ipcache_lookup6(&IPCACHE_MAP, dst, V6_CACHE_KEY_LEN, 0);
+	if (info && info->tunnel_endpoint != 0) {
+		memset(&gopt, 0, sizeof(gopt));
+		gopt.opt_class = bpf_htons(0x102);
+		gopt.type = 0x08;
+		gopt.r1 = 0;
+		gopt.r2 = 0;
+		gopt.r3 = 0;
+		gopt.length = 5;
+		gopt.opt_data[0] = bpf_htonl(svc_port);
+		gopt.opt_data[1] = bpf_htonl(svc_addr->p1);
+		gopt.opt_data[2] = bpf_htonl(svc_addr->p2);
+		gopt.opt_data[3] = bpf_htonl(svc_addr->p3);
+		gopt.opt_data[4] = bpf_htonl(svc_addr->p4);
+
+		*skip_fib = true;
+		return  __encap_with_nodeid_opt6(ctx, info->tunnel_endpoint,
+						 WORLD_ID,
+						 info->sec_label,
+						 NOT_VTEP_DST,
+						 &gopt,
+						 (enum trace_reason)CT_NEW,
+						 TRACE_PAYLOAD_LEN,
+						 ifindex);
+	}
+
+	return CTX_ACT_DROP;
+}
 #endif /* DSR_ENCAP_MODE */
 
 static __always_inline int find_dsr_v6(struct __ctx_buff *ctx, __u8 nexthdr,
@@ -302,9 +342,23 @@ static __always_inline int find_dsr_v6(struct __ctx_buff *ctx, __u8 nexthdr,
 }
 
 static __always_inline int
-nodeport_extract_dsr6(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
+nodeport_extract_dsr6(struct __ctx_buff *ctx,
+		      struct ipv6hdr *ip6 __maybe_unused,
 		      union v6addr *addr, __be16 *port, bool *dsr)
 {
+#if defined(ENABLE_DSR) && DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	struct geneve_opt6 gopt;
+	int ret = ctx_get_tunnel_opt(ctx, &gopt, sizeof(gopt));
+
+	if (ret > 0) {
+		*port = (__be16)bpf_ntohl(gopt.opt_data[0]);
+		addr->p1 = bpf_ntohl(gopt.opt_data[1]);
+		addr->p2 = bpf_ntohl(gopt.opt_data[2]);
+		addr->p3 = bpf_ntohl(gopt.opt_data[3]);
+		addr->p4 = bpf_ntohl(gopt.opt_data[4]);
+		*dsr = true;
+	}
+#else
 	struct dsr_opt_v6 opt __align_stack_8 = {};
 	int ret;
 
@@ -314,6 +368,7 @@ nodeport_extract_dsr6(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
 
 	*addr = opt.addr;
 	*port = opt.port;
+#endif
 
 	return 0;
 }
@@ -460,6 +515,9 @@ int tail_nodeport_ipv6_dsr(struct __ctx_buff *ctx)
 	int ret, ohead = 0;
 	int ext_err = 0;
 	bool l2_hdr_required = true;
+#if DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	bool skip_fib = false;
+#endif
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
 		ret = DROP_INVALID;
@@ -477,10 +535,17 @@ int tail_nodeport_ipv6_dsr(struct __ctx_buff *ctx)
 			    ctx_load_meta(ctx, CB_HINT), &ohead);
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
 	ret = dsr_set_ext6(ctx, ip6, &addr, port, &ohead);
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	ret = dsr_encap_geneve_opt6(ctx, ip6, &addr, port,
+				    &fib_params.l.ifindex, &skip_fib);
+	if (!IS_ERR(ret)) {
+		if (skip_fib)
+			goto out_send;
+	}
 #else
 # error "Invalid load balancer DSR encapsulation mode!"
 #endif
-	if (unlikely(ret)) {
+	if (IS_ERR(ret)) {
 		if (dsr_fail_needs_reply(ret))
 			return dsr_reply_icmp6(ctx, ip6, &addr, port, ret, ohead);
 		goto drop_err;
@@ -979,7 +1044,7 @@ redo:
 		ctx_store_meta(ctx, CB_ADDR_V6_2, tuple.daddr.p2);
 		ctx_store_meta(ctx, CB_ADDR_V6_3, tuple.daddr.p3);
 		ctx_store_meta(ctx, CB_ADDR_V6_4, tuple.daddr.p4);
-#elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE || DSR_ENCAP_MODE == DSR_ENCAP_NONE
 		ctx_store_meta(ctx, CB_PORT, key.dport);
 		ctx_store_meta(ctx, CB_ADDR_V6_1, key.address.p1);
 		ctx_store_meta(ctx, CB_ADDR_V6_2, key.address.p2);
@@ -1479,12 +1544,75 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 
 	return 0;
 }
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+static __always_inline int dsr_encap_geneve_opt4(struct __ctx_buff *ctx,
+						 struct iphdr *ip4, __u32 *ifindex, bool *skip_fib)
+{
+	struct remote_endpoint_info *info = NULL;
+	struct geneve_opt4 gopt;
+
+#ifndef TUNNEL_MODE
+	if (ip4->protocol == IPPROTO_TCP) {
+		union tcp_flags tcp_flags = { .value = 0 };
+
+		if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(*ip4) + 12,
+				   &tcp_flags, 2) < 0)
+			return DROP_CT_INVALID_HDR;
+
+		/* The encapsulation is required only for the first packet
+		 * (SYN), in the case of TCP, as for further packets of the
+		 * same connection a remote node will use a NAT entry to
+		 * reverse xlate a reply.
+		 */
+		if (!(tcp_flags.value & (TCP_FLAG_SYN))) {
+			*skip_fib = false;
+			return CTX_ACT_REDIRECT;
+		}
+	}
+#endif
+
+	info = ipcache_lookup4(&IPCACHE_MAP, ip4->daddr, V4_CACHE_KEY_LEN, 0);
+	if (info && info->tunnel_endpoint != 0) {
+		memset(&gopt, 0, sizeof(gopt));
+		gopt.opt_class = bpf_htons(0x102);
+		gopt.type = 0x08;
+		gopt.r1 = 0;
+		gopt.r2 = 0;
+		gopt.r3 = 0;
+		gopt.length = 2;
+		gopt.opt_data[0] = bpf_htonl(ctx_load_meta(ctx, CB_PORT));
+		gopt.opt_data[1] = bpf_htonl(ctx_load_meta(ctx, CB_ADDR_V4));
+
+		*skip_fib = true;
+		return  __encap_with_nodeid_opt4(ctx, info->tunnel_endpoint,
+						 WORLD_ID,
+						 info->sec_label,
+						 NOT_VTEP_DST,
+						 &gopt,
+						 (enum trace_reason)CT_NEW,
+						 TRACE_PAYLOAD_LEN,
+						 ifindex);
+	}
+
+	return CTX_ACT_DROP;
+}
 #endif /* DSR_ENCAP_MODE */
 
 static __always_inline int
-nodeport_extract_dsr4(struct __ctx_buff *ctx, struct iphdr *ip4,
+nodeport_extract_dsr4(struct __ctx_buff *ctx, struct iphdr *ip4 __maybe_unused,
 		      __be32 *addr, __be16 *port, bool *dsr)
 {
+#if defined(ENABLE_DSR) && DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	struct geneve_opt4 gopt;
+	int ret = ctx_get_tunnel_opt(ctx, &gopt, sizeof(gopt));
+
+	if (ret > 0) {
+		*port = (__be16)bpf_ntohl(gopt.opt_data[0]);
+		*addr = bpf_ntohl(gopt.opt_data[1]);
+		if (*port && *addr)
+			*dsr = true;
+	}
+#else
 	/* Check whether IPv4 header contains a 64-bit option (IPv4 header
 	 * w/o option (5 x 32-bit words) + the DSR option (2 x 32-bit words)).
 	 */
@@ -1506,6 +1634,7 @@ nodeport_extract_dsr4(struct __ctx_buff *ctx, struct iphdr *ip4,
 			*dsr = true;
 		}
 	}
+#endif
 
 	return 0;
 }
@@ -1666,6 +1795,10 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	__u16 port;
 	__be16 ohead = 0;
 	int ret, ext_err = 0;
+	int verdict = CTX_ACT_REDIRECT;
+#if DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	bool skip_fib = false;
+#endif
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
 		ret = DROP_INVALID;
@@ -1682,10 +1815,17 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	ret = dsr_set_opt4(ctx, ip4,
 			   addr,
 			   port, &ohead);
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE
+	ret = dsr_encap_geneve_opt4(ctx, ip4, &fib_params.l.ifindex, &skip_fib);
+	if (!IS_ERR(ret)) {
+		verdict = ret;
+		if (skip_fib)
+			goto out_send;
+	}
 #else
 # error "Invalid load balancer DSR encapsulation mode!"
 #endif
-	if (unlikely(ret)) {
+	if (IS_ERR(ret)) {
 		if (dsr_fail_needs_reply(ret))
 			return dsr_reply_icmp4(ctx, ip4, addr, port, ret, ohead);
 		goto drop_err;
@@ -1721,7 +1861,12 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	}
 out_send:
 	cilium_capture_out(ctx);
-	return ctx_redirect(ctx, fib_params.l.ifindex, 0);
+
+	if (verdict == CTX_ACT_REDIRECT)
+		return ctx_redirect(ctx, fib_params.l.ifindex, 0);
+
+	ctx_move_xfer(ctx);
+	return verdict;
 drop_err:
 	return send_drop_notify_error_ext(ctx, 0, ret, ext_err, CTX_ACT_DROP, METRIC_EGRESS);
 }
@@ -2116,7 +2261,7 @@ redo:
 		ctx_store_meta(ctx, CB_HINT,
 			       ((__u32)tuple.sport << 16) | tuple.dport);
 		ctx_store_meta(ctx, CB_ADDR_V4, tuple.daddr);
-#elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
+#elif DSR_ENCAP_MODE == DSR_ENCAP_GENEVE || DSR_ENCAP_MODE == DSR_ENCAP_NONE
 		ctx_store_meta(ctx, CB_PORT, key.dport);
 		ctx_store_meta(ctx, CB_ADDR_V4, key.address);
 #endif /* DSR_ENCAP_MODE */

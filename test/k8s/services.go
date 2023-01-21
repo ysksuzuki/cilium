@@ -589,6 +589,19 @@ Secondary Interface %s :: IPv4: (%s, %s), IPv6: (%s, %s)`,
 			testNodePortExternal(kubectl, ni, false, true, false)
 		})
 
+		It("Tests with TC, dsr with geneve", func() {
+			DeployCiliumOptionsAndDNS(kubectl, ciliumFilename, map[string]string{
+				"loadBalancer.acceleration": "disabled",
+				"loadBalancer.mode":         "dsr",
+				"loadBalancer.algorithm":    "random",
+				"tunnel":                    "disabled",
+				"autoDirectNodeRoutes":      "true",
+				"loadBalancer.dsrDispatch":  "geneve",
+				"devices":                   fmt.Sprintf(`'{}'`), // Revert back to auto-detection after XDP.
+			})
+			testNodePortExternal(kubectl, ni, false, true, false)
+		})
+
 		// Run on net-next and 4.19 but not on old versions, because of
 		// LRU requirement.
 		SkipItIf(func() bool {
