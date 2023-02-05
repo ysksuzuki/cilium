@@ -1117,7 +1117,7 @@ static __always_inline int dsr_set_ipipcni4(struct __ctx_buff *ctx,
 	const int l4_off = ETH_HLEN + sizeof(struct iphdr);
 	__be16 id, frag_off;
 	__be32 sum, sum_old;
-	__u8 ihlver;
+	__u8 ihlver, tos;
 
 	struct iphds {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
@@ -1193,11 +1193,17 @@ static __always_inline int dsr_set_ipipcni4(struct __ctx_buff *ctx,
 		return DROP_INVALID;
 
 	sum = csum_diff(&tp_old, 24, &tp_new, 24, 0);
-	if (ctx_load_bytes(ctx, l3_off + offsetof(struct iphdr, check), &sum_old, 2) < 0)
+	if (ctx_load_bytes(ctx, l3_off + offsetof(struct iphdr, tos),
+			     &tos, sizeof(tos)) < 0)
 		return DROP_CT_INVALID_HDR;
-	if (ctx_load_bytes(ctx, l3_off + offsetof(struct iphdr, id), &id, 2) < 0)
+	if (ctx_load_bytes(ctx, l3_off + offsetof(struct iphdr, id),
+			     &id, sizeof(id)) < 0)
 		return DROP_CT_INVALID_HDR;
-	if (ctx_load_bytes(ctx, l3_off + offsetof(struct iphdr, frag_off), &frag_off, 2) < 0)
+	if (ctx_load_bytes(ctx, l3_off + offsetof(struct iphdr, frag_off),
+			     &frag_off, sizeof(frag_off)) < 0)
+		return DROP_CT_INVALID_HDR;
+	if (ctx_load_bytes(ctx, l3_off + offsetof(struct iphdr, check),
+			     &sum_old, sizeof(sum_old)) < 0)
 		return DROP_CT_INVALID_HDR;
 
 	ihlver = *((__u8 *)&tp_new);
@@ -1221,6 +1227,9 @@ static __always_inline int dsr_set_ipipcni4(struct __ctx_buff *ctx,
 	if (ctx_store_bytes(ctx, l4_off,
 			    &ihlver, 1, 0) < 0)
 		return DROP_WRITE_ERROR;
+	if (ctx_store_bytes(ctx, l4_off + offsetof(struct iphdr, tos),
+			    &tos, 1, 0) < 0)
+		return DROP_WRITE_ERROR;
 	if (ctx_store_bytes(ctx, l4_off + offsetof(struct iphdr, tot_len),
 			    &tp_old.tot_len, 2, 0) < 0)
 		return DROP_WRITE_ERROR;
@@ -1233,11 +1242,11 @@ static __always_inline int dsr_set_ipipcni4(struct __ctx_buff *ctx,
 	if (ctx_store_bytes(ctx, l4_off + offsetof(struct iphdr, ttl),
 			    &tp_old.ttl, 2, 0) < 0)
 		return DROP_WRITE_ERROR;
-	if (ctx_store_bytes(ctx, l4_off + offsetof(struct iphdr, saddr),
-			    &tp_old.saddr, 8, 0) < 0)
-		return DROP_WRITE_ERROR;
 	if (ctx_store_bytes(ctx, l4_off + offsetof(struct iphdr, check),
 			    &sum_old, 2, 0) < 0)
+		return DROP_WRITE_ERROR;
+	if (ctx_store_bytes(ctx, l4_off + offsetof(struct iphdr, saddr),
+			    &tp_old.saddr, 8, 0) < 0)
 		return DROP_WRITE_ERROR;
 	return 0;
 }
