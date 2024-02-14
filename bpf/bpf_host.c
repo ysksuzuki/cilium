@@ -852,11 +852,24 @@ tail_handle_ipv4_cont(struct __ctx_buff *ctx, bool from_host)
 	__u32 src_sec_identity = ctx_load_and_clear_meta(ctx, CB_SRC_LABEL);
 	int ret;
 	__s8 ext_err = 0;
+#ifdef DEBUG
+	void *data, *data_end;
+	struct iphdr *ip4;
+	__be16 port;
+#endif
 
 	ret = handle_ipv4_cont(ctx, src_sec_identity, from_host, &ext_err);
 	if (IS_ERR(ret))
 		return send_drop_notify_error_ext(ctx, src_sec_identity, ret, ext_err,
 						  CTX_ACT_DROP, METRIC_INGRESS);
+#ifdef DEBUG
+	if (!revalidate_data(ctx, &data, &data_end, &ip4))
+		return DROP_INVALID;
+
+    ctx_load_bytes(ctx, ETH_HLEN + ipv4_hdrlen(ip4) + offsetof(struct tcphdr, dest), &port, sizeof(__be16));
+    if (bpf_htons(port) == 8472)
+	    printk("handle_ipv4_cont queue_mapping: %u port: %u", ctx->queue_mapping, bpf_ntohs(port));
+#endif
 	return ret;
 }
 
@@ -1227,6 +1240,10 @@ int cil_from_netdev(struct __ctx_buff *ctx)
 	__u32 flags = ctx_get_xfer(ctx, XFER_FLAGS);
 #endif
 	int ret;
+
+#ifdef DEBUG
+	ctx->queue_mapping = 1234;
+#endif
 
 	/* Filter allowed vlan id's and pass them back to kernel.
 	 * We will see the packet again in from-netdev@eth0.vlanXXX.

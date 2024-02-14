@@ -417,8 +417,15 @@ not_esp:
 			/* to-netdev@bpf_host handles SNAT, so no need to do it here. */
 			ret = egress_gw_fib_lookup_and_redirect(ctx, snat_addr,
 								daddr, ext_err);
-			if (ret == CTX_ACT_REDIRECT)
+			if (ret == CTX_ACT_REDIRECT) {
+#ifdef DEBUG
+				printk("bpf_overlay before queue_mapping: %u", ctx->queue_mapping);
+#endif
 				edt_set_aggregate(ctx, 0);
+#ifdef DEBUG
+				printk("bpf_overlay after queue_mapping: %u", ctx->queue_mapping);
+#endif
+			}
 
 			if (ret != CTX_ACT_OK)
 				return ret;
@@ -558,6 +565,10 @@ int cil_from_overlay(struct __ctx_buff *ctx)
 	bool decrypted;
 	__u16 proto;
 	int ret;
+
+#ifdef DEBUG
+	printk("cil_from_overlay queue_mapping: %u", ctx->queue_mapping);
+#endif
 
 #ifndef ENABLE_HIGH_SCALE_IPCACHE
 	/* preserve skb->cb for hs-ipcache, from-netdev is passing info */
