@@ -2075,10 +2075,10 @@ envoy:
     # type: [null, string]
     # @schema
     override: ~
-    repository: "quay.io/cilium/cilium-envoy"
-    tag: "v1.29.4-e2f41ce0e07065f353b8ce28f36c01de3cfdd819"
+    repository: "quay.io/cilium/cilium-envoy-dev"
+    tag: "c28a13f26a403afd4ee5c018829795754ad0211a"
     pullPolicy: "Always"
-    digest: "sha256:ec288baaac3758b2b0cfe2e146feb49204543961bd04f0195aae67f7b85d00f4"
+    digest: "sha256:1fc7795a706ae4f26b206f2f6dfd8f5526c9c69c50b024a0a6f7f88cc2ac7919"
     useDigest: true
   # -- Additional containers added to the cilium Envoy DaemonSet.
   extraContainers: []
