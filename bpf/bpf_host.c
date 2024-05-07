@@ -1497,6 +1497,72 @@ skip_host_firewall:
 		goto exit;
 #endif
 
+#ifdef ENABLE_EGRESS_GATEWAY_COMMON
+	{
+		void *data, *data_end;
+		struct iphdr *ip4;
+		struct ipv4_ct_tuple tuple = {};
+		struct ct_state ct_state = {};
+		enum ct_status ct_status;
+		struct remote_endpoint_info *info;
+		struct endpoint_info *gateway_node_ep, *src_ep;
+		__be32 gateway_ip = 0;
+		__u32 dst_sec_identity = 0;
+
+		if (!revalidate_data(ctx, &data, &data_end, &ip4))
+			return DROP_INVALID;
+
+		info = lookup_ip4_remote_endpoint(ip4->daddr, 0);
+		if (info && info->sec_identity) {
+			dst_sec_identity = info->sec_identity;
+		} else {
+			dst_sec_identity = WORLD_IPV4_ID;
+		}
+
+		/* If the packet is destined to an entity inside the cluster,
+		 * either EP or node, it should not be forwarded to an egress
+		 * gateway since only traffic leaving the cluster is supposed to
+		 * be masqueraded with an egress IP.
+		 */
+		if (identity_is_cluster(dst_sec_identity))
+			goto skip_egress_gateway;
+
+		tuple.nexthdr = ip4->protocol;
+		tuple.daddr = ip4->daddr;
+		tuple.saddr = ip4->saddr;
+
+		ct_status = (enum ct_status)ct_lookup4(get_ct_map4(&tuple), &tuple, ctx, ip4, ETH_HLEN + ipv4_hdrlen(ip4),
+					   CT_EGRESS, &ct_state, &trace.monitor);
+
+		ret = egress_gw_request_needs_redirect_hook(&tuple, ct_status, &gateway_ip);
+		if (IS_ERR(ret))
+			return send_drop_notify_error(ctx, src_sec_identity,
+						      DROP_NO_EGRESS_GATEWAY,
+						      CTX_ACT_DROP, METRIC_EGRESS);
+
+		if (ret == CTX_ACT_OK)
+			goto skip_egress_gateway;
+
+		/* If the gateway node is the local node, then just let the
+		 * packet go through, as it will be SNATed later on by
+		 * handle_nat_fwd().
+		 */
+		gateway_node_ep = __lookup_ip4_endpoint(gateway_ip);
+		if (gateway_node_ep && (gateway_node_ep->flags & ENDPOINT_F_HOST))
+			goto skip_egress_gateway;
+
+		src_ep = __lookup_ip4_endpoint(ip4->saddr);
+		if (src_ep)
+			src_sec_identity = src_ep->sec_id;
+
+		/* Send the packet to egress gateway node through a tunnel. */
+		return encap_and_redirect_with_nodeid(ctx, gateway_ip, 0,
+						src_sec_identity,
+						dst_sec_identity, &trace);
+	}
+skip_egress_gateway:
+#endif
+
 #ifdef ENABLE_NODEPORT
 	if (!ctx_snat_done(ctx) && !ctx_is_overlay(ctx)) {
 		/*
