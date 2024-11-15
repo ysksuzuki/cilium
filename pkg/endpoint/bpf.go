@@ -825,7 +825,7 @@ func (e *Endpoint) garbageCollectConntrack(filter ctmap.GCFilter) {
 		}
 		defer m.Close()
 
-		ctmap.GC(m, filter)
+		ctmap.GC(m, filter, func(event ctmap.GCEvent) {}, func(event ctmap.GCEvent) {})
 	}
 }
 
