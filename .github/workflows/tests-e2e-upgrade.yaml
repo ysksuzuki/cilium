@@ -61,6 +61,13 @@ on:
         description: "[JSON object] Arbitrary arguments passed from the trigger comment via regex capture group. Parse with 'fromJson(inputs.extra-args).argName' in workflow."
         required: false
         default: '{}'
+      # TEMPORARY (revert before merge): lets a workflow_dispatch run exercise
+      # the schedule-only code paths for testing on a feature branch.
+      force-schedule:
+        description: "TEMPORARY: simulate a direct scheduled run (full matrix + full test suite). Revert before merge."
+        required: false
+        type: boolean
+        default: false
 
   # Run every 8 hours
   schedule:
@@ -165,7 +172,7 @@ jobs:
             CONFIG_COUNT=$(jq 'length' matrix.json)
             echo "::notice::Filtering matrix to test-l7: true configurations only (${CONFIG_COUNT} configs for L7-only testing)"
             echo "timeout=60" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ inputs.is-workflow-call }}" != "true" ]; then
+          elif { [ "${{ github.event_name }}" = "schedule" ] && [ "${{ inputs.is-workflow-call }}" != "true" ]; } || [ "${{ inputs.force-schedule }}" = "true" ]; then
             jq --argjson modes "$MODES" '[.[] | del(."key-two", ."test-l7") | . as $entry | [$modes[] | . as $m | $entry + {mode: $m}]] | flatten' configs.json > matrix.json
             CONFIG_COUNT=$(jq 'length' matrix.json)
             echo "::notice::Including all configurations in matrix (${CONFIG_COUNT} configs - scheduled run with full test suite)"
@@ -289,7 +296,7 @@ jobs:
             # L7-only mode: run only L7 tests
             CONCURRENT_CONNECTIVITY_TESTS="${CONCURRENT_CONNECTIVITY_TESTS}${L7_FILTER},no-unexpected-packet-drops,check-log-errors"
             echo "::notice::Running L7-only tests ${L7_FILTER}"
-          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ inputs.is-workflow-call }}" != "true" ]; then
+          elif { [ "${{ github.event_name }}" = "schedule" ] && [ "${{ inputs.is-workflow-call }}" != "true" ]; } || [ "${{ inputs.force-schedule }}" = "true" ]; then
             # Scheduled run (direct trigger): full test suite (L3/L4 AND L7)
             echo "::notice::Running full test suite (L3/L4 AND L7 tests)"
           else
@@ -442,7 +449,7 @@ jobs:
           # Determine if L7 traffic testing should be enabled for conn-disrupt-test
           # Only enable when test-l7-only is true or on scheduled runs
           INCLUDE_CONN_DISRUPT_TEST_L7_TRAFFIC="false"
-          if [ "${{ inputs.test-l7-only }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "${{ inputs.test-l7-only }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.force-schedule }}" = "true" ]; then
             INCLUDE_CONN_DISRUPT_TEST_L7_TRAFFIC="true"
           fi
           echo include_conn_disrupt_test_l7_traffic=${INCLUDE_CONN_DISRUPT_TEST_L7_TRAFFIC} >> $GITHUB_OUTPUT
